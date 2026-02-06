@@ -161,8 +161,7 @@ class VirtualReviewRunner:
         
         # Configure DSPy with specified model (cache=False to prevent disk caching)
         model_name = self.model
-        if not model_name.startswith("gemini/"):
-            model_name = f"gemini/{model_name}"
+        # Allow dspy to handle the model string as is (prefix now handled by TS CLI)
         
         self._lm = dspy.LM(model_name, cache=False)
         
