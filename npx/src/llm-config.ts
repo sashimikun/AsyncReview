@@ -15,7 +15,7 @@ export const PROVIDERS: Record<string, LLMProvider> = {
         name: 'Gemini',
         envVar: 'GEMINI_API_KEY',
         prefix: 'gemini/',
-        defaultModel: 'gemini-1.5-pro',
+        defaultModel: 'gemini-3.0-pro-preview',
         matches: (model) => model.startsWith('gemini')
     },
     openai: {
