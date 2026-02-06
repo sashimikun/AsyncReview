@@ -35,9 +35,11 @@ export async function runReview(options: ReviewOptions): Promise<void> {
         const provider = getProviderFromModel(resolvedModel);
 
         // Ensure model string passed to Python has the provider prefix if needed
-        let modelToPass = model;
-        if (model && !model.includes('/')) {
-            modelToPass = `${provider.prefix}${model}`;
+        // Use resolvedModel as base if model is undefined to ensure sync with Python
+        let modelToPass = model || resolvedModel;
+
+        if (!modelToPass.includes('/')) {
+            modelToPass = `${provider.prefix}${modelToPass}`;
         }
 
         // 4. Get API key

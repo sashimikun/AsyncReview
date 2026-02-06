@@ -43,7 +43,7 @@ export const PROVIDERS: Record<string, LLMProvider> = {
 export function getProviderFromModel(model: string): LLMProvider {
     // If model has a prefix (e.g. "openai/gpt-4"), use it to find provider
     if (model.includes('/')) {
-        const prefix = model.split('/')[0];
+        const prefix = model.split('/')[0].toLowerCase();
         if (PROVIDERS[prefix]) {
             return PROVIDERS[prefix];
         }
