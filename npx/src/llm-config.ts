@@ -66,3 +66,34 @@ export function getProviderFromModel(model: string): LLMProvider {
     // 3. Fail safe instead of defaulting
     throw new Error(`Could not infer provider for model '${model}'. Please use the format 'provider/model' (e.g. 'anthropic/claude-3').`);
 }
+
+/**
+ * Normalize a model name and return its provider configuration
+ * Handles default model logic, provider inference, and canonical name construction
+ */
+export function normalizeModelName(model: string | undefined): { provider: LLMProvider, canonicalName: string } {
+    // Handle default case
+    if (!model) {
+        const provider = PROVIDERS.gemini;
+        return {
+            provider,
+            canonicalName: provider.defaultModel.includes('/')
+                ? provider.defaultModel
+                : `${provider.prefix}${provider.defaultModel}`
+        };
+    }
+
+    const provider = getProviderFromModel(model);
+    let canonicalName = model;
+
+    if (model.includes('/')) {
+        // Normalize prefix case (e.g. OpenAI/gpt -> openai/gpt)
+        const [prefix, ...rest] = model.split('/');
+        canonicalName = `${prefix.toLowerCase()}/${rest.join('/')}`;
+    } else {
+        // Add missing prefix
+        canonicalName = `${provider.prefix}${model}`;
+    }
+
+    return { provider, canonicalName };
+}
