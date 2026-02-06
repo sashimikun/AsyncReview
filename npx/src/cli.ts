@@ -38,7 +38,11 @@ export async function runReview(options: ReviewOptions): Promise<void> {
         // Use resolvedModel as base if model is undefined to ensure sync with Python
         let modelToPass = model || resolvedModel;
 
-        if (!modelToPass.includes('/')) {
+        if (modelToPass.includes('/')) {
+            // Normalize prefix case (e.g. OpenAI/gpt -> openai/gpt)
+            const [prefix, ...rest] = modelToPass.split('/');
+            modelToPass = `${prefix.toLowerCase()}/${rest.join('/')}`;
+        } else {
             modelToPass = `${provider.prefix}${modelToPass}`;
         }
 

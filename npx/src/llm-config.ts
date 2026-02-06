@@ -47,11 +47,12 @@ export function getProviderFromModel(model: string): LLMProvider {
         if (PROVIDERS[prefix]) {
             return PROVIDERS[prefix];
         }
+        throw new Error(`Unknown LLM provider prefix: '${prefix}'. Supported: ${Object.keys(PROVIDERS).join(', ')}`);
     }
 
     // Check known model prefixes if no provider prefix is present
     const lowerModel = model.toLowerCase();
-    if (lowerModel.startsWith('gpt')) return PROVIDERS.openai;
+    if (lowerModel.startsWith('gpt') || lowerModel.startsWith('o1')) return PROVIDERS.openai;
     if (lowerModel.startsWith('claude')) return PROVIDERS.anthropic;
     if (lowerModel.startsWith('deepseek')) return PROVIDERS.deepseek;
 
