@@ -32,7 +32,17 @@ export async function runReview(options: ReviewOptions): Promise<void> {
     try {
         // Determine provider and model
         const resolvedModel = model || PROVIDERS.gemini.defaultModel;
-        const provider = getProviderFromModel(resolvedModel);
+        let provider;
+        try {
+            provider = getProviderFromModel(resolvedModel);
+        } catch (e) {
+            // If heuristics fail, default to Gemini if it's the default model, otherwise rethrow
+            if (resolvedModel === PROVIDERS.gemini.defaultModel) {
+                provider = PROVIDERS.gemini;
+            } else {
+                throw e;
+            }
+        }
 
         // Ensure model string passed to Python has the provider prefix if needed
         // Use resolvedModel as base if model is undefined to ensure sync with Python
@@ -41,7 +51,12 @@ export async function runReview(options: ReviewOptions): Promise<void> {
         if (modelToPass.includes('/')) {
             // Normalize prefix case (e.g. OpenAI/gpt -> openai/gpt)
             const [prefix, ...rest] = modelToPass.split('/');
-            modelToPass = `${prefix.toLowerCase()}/${rest.join('/')}`;
+            // Verify prefix exists in PROVIDERS to be safe
+            if (PROVIDERS[prefix.toLowerCase()]) {
+                 modelToPass = `${prefix.toLowerCase()}/${rest.join('/')}`;
+            }
+            // If not found, we leave it as is (Python side might handle it or error out,
+            // but getProviderFromModel would have thrown already if we used it directly)
         } else {
             modelToPass = `${provider.prefix}${modelToPass}`;
         }

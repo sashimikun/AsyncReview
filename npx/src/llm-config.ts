@@ -7,6 +7,7 @@ export interface LLMProvider {
     envVar: string;
     prefix: string;
     defaultModel: string;
+    matches?: (model: string) => boolean;
 }
 
 export const PROVIDERS: Record<string, LLMProvider> = {
@@ -14,34 +15,38 @@ export const PROVIDERS: Record<string, LLMProvider> = {
         name: 'Gemini',
         envVar: 'GEMINI_API_KEY',
         prefix: 'gemini/',
-        defaultModel: 'gemini-3.0-pro-preview'
+        defaultModel: 'gemini-3.0-pro-preview',
+        matches: (model) => model.startsWith('gemini')
     },
     openai: {
         name: 'OpenAI',
         envVar: 'OPENAI_API_KEY',
         prefix: 'openai/',
-        defaultModel: 'gpt-4o'
+        defaultModel: 'gpt-4o',
+        matches: (model) => model.startsWith('gpt') || model.startsWith('o1')
     },
     anthropic: {
         name: 'Anthropic',
         envVar: 'ANTHROPIC_API_KEY',
         prefix: 'anthropic/',
-        defaultModel: 'claude-3-opus-20240229'
+        defaultModel: 'claude-3-opus-20240229',
+        matches: (model) => model.startsWith('claude')
     },
     deepseek: {
         name: 'DeepSeek',
         envVar: 'DEEPSEEK_API_KEY',
         prefix: 'deepseek/',
-        defaultModel: 'deepseek-chat'
+        defaultModel: 'deepseek-chat',
+        matches: (model) => model.startsWith('deepseek')
     }
 };
 
 /**
  * Get the provider configuration for a given model string
- * Defaults to Gemini if no matching provider found
+ * Throws an error if no provider can be inferred
  */
 export function getProviderFromModel(model: string): LLMProvider {
-    // If model has a prefix (e.g. "openai/gpt-4"), use it to find provider
+    // 1. Check explicit prefix (e.g. "openai/gpt-4")
     if (model.includes('/')) {
         const prefix = model.split('/')[0].toLowerCase();
         if (PROVIDERS[prefix]) {
@@ -50,12 +55,14 @@ export function getProviderFromModel(model: string): LLMProvider {
         throw new Error(`Unknown LLM provider prefix: '${prefix}'. Supported: ${Object.keys(PROVIDERS).join(', ')}`);
     }
 
-    // Check known model prefixes if no provider prefix is present
+    // 2. Check heuristics
     const lowerModel = model.toLowerCase();
-    if (lowerModel.startsWith('gpt') || lowerModel.startsWith('o1')) return PROVIDERS.openai;
-    if (lowerModel.startsWith('claude')) return PROVIDERS.anthropic;
-    if (lowerModel.startsWith('deepseek')) return PROVIDERS.deepseek;
+    for (const key in PROVIDERS) {
+        if (PROVIDERS[key].matches?.(lowerModel)) {
+            return PROVIDERS[key];
+        }
+    }
 
-    // Default fallback
-    return PROVIDERS.gemini;
+    // 3. Fail safe instead of defaulting
+    throw new Error(`Could not infer provider for model '${model}'. Please use the format 'provider/model' (e.g. 'anthropic/claude-3').`);
 }
