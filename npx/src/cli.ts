@@ -5,6 +5,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { getApiKey, getGitHubToken } from './api-key.js';
+import { normalizeModelName } from './llm-config.js';
 import {
     checkPython,
     checkDeno,
@@ -29,9 +30,11 @@ export async function runReview(options: ReviewOptions): Promise<void> {
     const { url, question, output, quiet = false, model, api, githubToken, expert = false } = options;
 
     try {
+        // Determine provider and model (normalized)
+        const { provider, canonicalName } = normalizeModelName(model);
 
         // 4. Get API key
-        const apiKey = await getApiKey(api);
+        const apiKey = await getApiKey(api, provider);
 
         // 5. Get GitHub token (required for code search API)
         const ghToken = await getGitHubToken(githubToken, true);
@@ -51,8 +54,9 @@ export async function runReview(options: ReviewOptions): Promise<void> {
             question,
             output,
             quiet,
-            model,
+            model: canonicalName,
             apiKey,
+            providerEnvVar: provider.envVar,
             githubToken: ghToken,
             expert,
         });
