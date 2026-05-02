@@ -47,6 +47,39 @@ def _get_headers() -> dict[str, str]:
     return headers
 
 
+async def _fetch_all_pages(client: httpx.AsyncClient, url: str, headers: dict, params: dict | None = None) -> list[dict]:
+    """Fetch all pages from a paginated GitHub API endpoint."""
+    all_items = []
+    page = 1
+    params = params.copy() if params else {}
+    params["per_page"] = 100
+    params["page"] = page
+
+    while True:
+        resp = await client.get(url, headers=headers, params=params, timeout=30.0)
+
+        # Handle 404/Empty gracefully if needed, but for list endpoints 200 is expected
+        if resp.status_code == 404:
+            return []
+
+        resp.raise_for_status()
+        items = resp.json()
+
+        if not items:
+            break
+
+        all_items.extend(items)
+
+        # If we got fewer than per_page items, we've reached the end
+        if len(items) < 100:
+            break
+
+        page += 1
+        params["page"] = page
+
+    return all_items
+
+
 async def load_pr(pr_url: str) -> PRInfo:
     """Load PR metadata from GitHub.
     
@@ -70,63 +103,54 @@ async def load_pr(pr_url: str) -> PRInfo:
         pr_data = pr_resp.json()
         
         # Fetch changed files
-        files_resp = await client.get(
+        files_data = await _fetch_all_pages(
+            client,
             f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{number}/files",
-            headers=_get_headers(),
-            params={"per_page": 100},
-            timeout=30.0,
+            _get_headers(),
         )
-        files_resp.raise_for_status()
-        files_data = files_resp.json()
     
         # Fetch commits
-        commits_resp = await client.get(
+        commits_data = await _fetch_all_pages(
+            client,
             f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{number}/commits",
-            headers=_get_headers(),
-            params={"per_page": 100},
-            timeout=30.0,
+            _get_headers(),
         )
-        commits_list = []
-        if commits_resp.status_code == 200:
-            commits_data = commits_resp.json()
-            commits_list = [
-                {
-                    "sha": c["sha"],
-                    "message": c["commit"]["message"],
-                    "author": {
-                        "name": c["commit"]["author"]["name"],
-                        "date": c["commit"]["author"]["date"],
-                        "login": c["author"]["login"] if c.get("author") else None,
-                        "avatar_url": c["author"]["avatar_url"] if c.get("author") else None,
-                    },
-                    "html_url": c["html_url"],
-                }
-                for c in commits_data
-            ]
+
+        commits_list = [
+            {
+                "sha": c["sha"],
+                "message": c["commit"]["message"],
+                "author": {
+                    "name": c["commit"]["author"]["name"],
+                    "date": c["commit"]["author"]["date"],
+                    "login": c["author"]["login"] if c.get("author") else None,
+                    "avatar_url": c["author"]["avatar_url"] if c.get("author") else None,
+                },
+                "html_url": c["html_url"],
+            }
+            for c in commits_data
+        ]
 
         # Fetch comments (using issue comments for main conversation)
-        comments_resp = await client.get(
+        comments_data = await _fetch_all_pages(
+            client,
             f"{GITHUB_API_BASE}/repos/{owner}/{repo}/issues/{number}/comments",
-            headers=_get_headers(),
-            params={"per_page": 100},
-            timeout=30.0,
+            _get_headers(),
         )
-        comments_list = []
-        if comments_resp.status_code == 200:
-             comments_data = comments_resp.json()
-             comments_list = [
-                 {
-                     "id": c["id"],
-                     "user": {
-                         "login": c["user"]["login"],
-                         "avatar_url": c["user"]["avatar_url"],
-                     },
-                     "body": c["body"],
-                     "created_at": c["created_at"],
-                     "html_url": c["html_url"],
-                 }
-                 for c in comments_data
-             ]
+
+        comments_list = [
+             {
+                 "id": c["id"],
+                 "user": {
+                     "login": c["user"]["login"],
+                     "avatar_url": c["user"]["avatar_url"],
+                 },
+                 "body": c["body"],
+                 "created_at": c["created_at"],
+                 "html_url": c["html_url"],
+             }
+             for c in comments_data
+         ]
 
     files = [
         {
@@ -195,42 +219,75 @@ async def get_file_contents(
     base_sha, head_sha = pr_info.base_sha, pr_info.head_sha
     
     async with httpx.AsyncClient() as client:
-        old_file = None
-        new_file = None
-        
+        async def _fetch_content(ref: str) -> str | None:
+            # 1. Try raw content (fastest)
+            try:
+                resp = await client.get(
+                    f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contents/{path}",
+                    headers={**_get_headers(), "Accept": "application/vnd.github.v3.raw"},
+                    params={"ref": ref},
+                    timeout=30.0,
+                )
+                if resp.status_code == 200:
+                    return resp.text
+                elif resp.status_code == 404:
+                    return None
+                # If 403 or other error, fall through to fallback
+            except Exception:
+                pass
+
+            # 2. Fallback: Get metadata to find SHA, then fetch blob (handles large files > 1MB)
+            try:
+                # Get file metadata
+                meta_resp = await client.get(
+                    f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contents/{path}",
+                    headers=_get_headers(),  # Default JSON
+                    params={"ref": ref},
+                    timeout=30.0,
+                )
+                if meta_resp.status_code == 404:
+                    return None
+
+                meta_resp.raise_for_status()
+                data = meta_resp.json()
+
+                # If content is present (small file), use it
+                if data.get("content"):
+                    import base64
+                    return base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+
+                # If content is missing (large file), use sha to fetch blob
+                sha = data.get("sha")
+                if sha:
+                    blob_resp = await client.get(
+                        f"{GITHUB_API_BASE}/repos/{owner}/{repo}/git/blobs/{sha}",
+                        headers=_get_headers(),
+                        timeout=30.0,
+                    )
+                    blob_resp.raise_for_status()
+                    blob_data = blob_resp.json()
+                    import base64
+                    return base64.b64decode(blob_data["content"]).decode("utf-8", errors="replace")
+            except Exception:
+                pass
+
+            return None
+
         # Fetch base version
-        try:
-            base_resp = await client.get(
-                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contents/{path}",
-                headers={**_get_headers(), "Accept": "application/vnd.github.v3.raw"},
-                params={"ref": base_sha},
-                timeout=30.0,
-            )
-            if base_resp.status_code == 200:
-                old_file = FileContents(
-                    name=path,
-                    contents=base_resp.text,
-                    cache_key=f"{owner}/{repo}/{base_sha}/{path}",
-                )
-        except httpx.HTTPStatusError:
-            pass  # File doesn't exist in base (new file)
-        
+        old_content = await _fetch_content(base_sha)
+        old_file = FileContents(
+            name=path,
+            contents=old_content,
+            cache_key=f"{owner}/{repo}/{base_sha}/{path}",
+        ) if old_content is not None else None
+
         # Fetch head version
-        try:
-            head_resp = await client.get(
-                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contents/{path}",
-                headers={**_get_headers(), "Accept": "application/vnd.github.v3.raw"},
-                params={"ref": head_sha},
-                timeout=30.0,
-            )
-            if head_resp.status_code == 200:
-                new_file = FileContents(
-                    name=path,
-                    contents=head_resp.text,
-                    cache_key=f"{owner}/{repo}/{head_sha}/{path}",
-                )
-        except httpx.HTTPStatusError:
-            pass  # File doesn't exist in head (deleted file)
+        new_content = await _fetch_content(head_sha)
+        new_file = FileContents(
+            name=path,
+            contents=new_content,
+            cache_key=f"{owner}/{repo}/{head_sha}/{path}",
+        ) if new_content is not None else None
     
     return old_file, new_file
 
