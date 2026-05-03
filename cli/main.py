@@ -141,7 +141,7 @@ Examples:
     review_parser.add_argument(
         "--question", "-q",
         type=str,
-        required=True,
+        required=False,
         help="Question to ask about the PR/Issue",
     )
     review_parser.add_argument(
@@ -150,6 +150,11 @@ Examples:
         choices=["text", "markdown", "json"],
         default="text",
         help="Output format (default: text)",
+    )
+    review_parser.add_argument(
+        "--expert",
+        action="store_true",
+        help="Run expert code review (SOLID, Security, Performance, Code Quality)",
     )
     review_parser.add_argument(
         "--quiet",
@@ -166,9 +171,24 @@ Examples:
     args = parser.parse_args()
     
     if args.command == "review":
+        if not args.question and not getattr(args, "expert", False):
+            review_parser.error("Either --question or --expert must be provided for a review.")
+            
+        question = args.question
+        if getattr(args, "expert", False):
+            expert_prompt = (
+                "Perform an expert code review covering SOLID principles, "
+                "security vulnerabilities, performance issues, and code quality. "
+                "Highlight any P0 (Critical) or P1 (High) issues clearly."
+            )
+            if question:
+                question = f"{expert_prompt}\n\nAdditionally, consider this question: {question}"
+            else:
+                question = expert_prompt
+
         asyncio.run(run_review(
             url=args.url,
-            question=args.question,
+            question=question,
             output_format=args.output,
             quiet=args.quiet,
             model=args.model,
